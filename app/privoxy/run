@@ -5,7 +5,21 @@ if [ -z ${LOCAL_NETWORK} ]; then
     exit 1
 fi
 
-sleep 10
+#Wait for VPN to be connected
+while ! ip link show dev tun0 > /dev/null 2>&1; do
+  echo "vpn not connected yet"
+  sleep 1
+done
+
+#Monitor the vpn connection and kill privoxy when the connection is broken
+( ip monitor link dev tun0 & echo $! >&3 ) 3>/var/run/privoxy_ip_monnitor.pid | while read line ; do
+  echo "=== $line ==="
+  if echo "$line" | grep "^Deleted" >/dev/null; then
+    echo "killing privoxy!"
+    kill $(cat /var/run/privoxy.pid) # Kill privoxy. runsvdir will autorestart privoxy and wait for a connection
+  fi
+  kill $(cat /var/run/privoxy_ip_monnitor.pid) # Kill the monitor process to break out of this loop
+done &
 
 export TEMP_DIR="$(mktemp -d)"
 
@@ -16,4 +30,4 @@ gw=$(ip route | awk '/default/ {print $3}')
 ip route add to ${LOCAL_NETWORK} via $gw dev eth0
 
 # start
-privoxy --no-daemon "${TEMP_DIR}/config"
+privoxy --no-daemon --pidfile /var/run/privoxy.pid  "${TEMP_DIR}/config"
